@@ -1,0 +1,273 @@
+---
+title: "Assignment 4"
+author: "Mikaela Hoffman-Stapleton"
+date: "April 21, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(glmnet)
+library(caret)
+library(gtools)
+```
+
+See next page.
+
+\begin{center} 
+\includegraphics[width=8in]{Scan.jpeg} 
+\end{center}
+
+# Computational Questions
+
+## 1.
+
+```{r}
+# set-up
+data <- read.csv('~/Documents/MSAN 628/HW 4/OnlineNewsPopularityTraining.csv', header = T)
+data$shares <- NULL
+data$url <- NULL
+data$timedelta <- NULL
+x <- model.matrix(popular ~., data = data)[, -1]
+y <- data$popular
+train <- sample(1:nrow(x), nrow(x) / 2)
+test <- (-train)
+y.train <- y[train]
+y.test  <- y[test]
+grid.lambda <- 10^seq(10, -2, length = 100)
+```
+
+### (a)
+
+```{r}
+nrow(data[which(data$popular == 0),])/nrow(data)
+nrow(data[which(data$popular == 1),])/nrow(data)
+```
+
+We see that the data is unbalanced, where 0.7971% of articles are not popular and 0.2029% of articles are popular. As a result, we will experiement with downsamping the negative cases, but first lets see the outcome of training a model with the entire dataset.
+
+
+```{r, tidy=TRUE}
+# all predictors included
+all.model.train <- glm(popular ~., data = data, family = "binomial", subset = train)
+all.probs.train <- predict(all.model.train, type = "response", newx = x[test, ])
+d <- length(y.test)
+all.pred.test <- rep(0, d)
+all.pred.test[all.probs.train > 0.5] <- 1
+mspe.all <- mean((all.pred.test - y.test)^2)
+all.final.model <- glm(popular ~., data = data, family = "binomial")
+# lasso
+lasso.model <- glmnet(x, y, family = "binomial", alpha = 1, lambda = grid.lambda)
+plot(lasso.model)
+lasso.model.train <- glmnet(x[train, ], y.train, family = "binomial", alpha = 1, lambda = grid.lambda)
+lasso.cv.out <- cv.glmnet(x[train, ], y.train, family = "binomial", alpha = 1)
+lasso.best.lambda <- lasso.cv.out$lambda.min
+plot(lasso.cv.out)
+abline(v = log(lasso.best.lambda), col = "blue", lwd = 2)
+lasso.probs.train <- predict(lasso.model.train, type = "response", s = lasso.best.lambda, newx = x[test,])
+lasso.pred.test <- rep(0, d)
+lasso.pred.test[lasso.probs.train > 0.5] <- 1
+mspe.lasso <- mean((lasso.pred.test - y.test)^2)
+lasso.final.model <- glmnet(x, y, family = "binomial", alpha = 1, lambda = lasso.best.lambda)
+coef.lasso <- coef(lasso.final.model)
+exclude <- sum(coef.lasso == 0)
+exclude
+# comparison
+MSPE <- data.frame(All = mspe.all,  Lasso = mspe.lasso)
+MSPE
+```
+
+As expected, using the lasso has sent `r exclude` predictors to zero, simplifying the original model and making it more interpretable. We also end up getting a slightly lower MSPE, which is another advantage to using the lasso model. However, we notice that these MSPEs are very similar to the percentage of articles that are popular, indicating that the models are probably predicting mostly zeroes. To check this, we determine the model's specificity:
+
+```{r}
+specificity(factor(all.pred.test), factor(y.test))
+specificity(factor(lasso.pred.test), factor(y.test))
+```
+
+Indeed, these are very low, indicating that the models are hardly picking up any of the popular articles. We now turn to downsampling in an attempt to increase the models' specificity.
+
+```{r, tidy=TRUE}
+indices <- sample(which(data$popular == 0), nrow(data[which(data$popular == 1),]))
+indices <- c(indices, which(data$popular == 1))
+indices <- sample(indices, length(indices))
+new.data = data[indices,]
+x <- model.matrix(popular ~., data = new.data)[, -1]
+y <- new.data$popular
+train <- sample(1:nrow(x), nrow(x) / 2)
+test <- (-train)
+y.train <- y[train]
+y.test  <- y[test]
+# all predictors included
+all.model.train <- glm(popular ~., data = data, family = "binomial", subset = train)
+all.probs.train <- predict(all.model.train, type = "response", newx = x[test, ])
+d <- length(y.test)
+all.pred.test <- rep(0, d)
+all.pred.test[all.probs.train > 0.5] <- 1
+mspe.all <- mean((all.pred.test - y.test)^2)
+spec.all <- specificity(factor(all.pred.test), factor(y.test))
+all.final.model <- glm(popular ~., data = data, family = "binomial")
+# lasso
+lasso.model <- glmnet(x, y, family = "binomial", alpha = 1, lambda = grid.lambda)
+plot(lasso.model)
+lasso.model.train <- glmnet(x[train, ], y.train, family = "binomial", alpha = 1, lambda = grid.lambda)
+lasso.cv.out <- cv.glmnet(x[train, ], y.train, family = "binomial", alpha = 1)
+lasso.best.lambda <- lasso.cv.out$lambda.min
+plot(lasso.cv.out)
+abline(v = log(lasso.best.lambda), col = "blue", lwd = 2)
+lasso.probs.train <- predict(lasso.model.train, type = "response", s = lasso.best.lambda, newx = x[test,])
+lasso.pred.test <- rep(0, d)
+lasso.pred.test[lasso.probs.train > 0.5] <- 1
+mspe.lasso <- mean((lasso.pred.test - y.test)^2)
+spec.lasso <- specificity(factor(lasso.pred.test), factor(y.test))
+lasso.final.model <- glmnet(x, y, family = "binomial", alpha = 1, lambda = lasso.best.lambda)
+coef.lasso <- coef(lasso.final.model)
+exclude <- sum(coef.lasso == 0)
+exclude
+# comparison
+MSPE <- data.frame(All = mspe.all,  Lasso = mspe.lasso)
+MSPE
+Specificity <- data.frame(All = spec.all,  Lasso = spec.lasso)
+Specificity
+```
+
+As we can see, both MSPEs have increased, however, the lasso model's specificity has also increased. This means that, while the lasso model is technically worse at predicting, it is able to pick up the popular articles way better than when we used the entire dataset. Since we are interested in interpreting the model and figuring out which predictors are relevant (and not necessarily in attaining the best predictions), we will stick with using the downsampled dataset. The lasso model, which has now sent `r exclude` predictors to zero, is the clear choice. It gives the following coefficients:
+
+```{r}
+coef(lasso.final.model)
+```
+
+### (b)
+
+For this part, we need to come up with a prior that makes sense. In class, we went over the Beta-Binomial model, so letting $p_j\sim$ Beta$(\alpha_j,\gamma_j)$ is a good choice. However, we must provide the parameters $\alpha_j$ and $\gamma_j$. Looking at the Beta distribution on Wikipedia, we see that these two parameters can be written in terms of the expected value ($\mu$) and the variance ($\sigma$):
+
+$$\alpha=\mu\sigma$$
+$$\gamma=(1-\mu)\sigma$$
+
+So we can solve for $\alpha$ and $\gamma$ using our best estimates of $\mu$ and $\sigma$. We can calculate the sample probabilities $p_0$ and $p_1$ and treat these as the expected value of each distribution. This would mean using $p_0$ and $p_1$ as our estimates of $\mu_0$ and $\mu_1$. We can also use the variance of the response column as our estimate for $\sigma$.
+
+```{r}
+mu0 <- nrow(data[which(data$popular == 0),])/nrow(data)
+mu1 <- nrow(data[which(data$popular == 1),])/nrow(data)
+sigma <- var(data$popular)
+alpha0 <- mu0*sigma
+gamma0 <- (1-mu0)*sigma
+alpha1 <- mu1*sigma
+gamma1 <- (1-mu1)*sigma
+```
+
+Then we can find the posterior:
+
+$$p(p_j|z_j)\propto p(p_j)p(z_j|p_j)$$
+$$\propto p_j^{\alpha_j-1}(1-p_j)^{\gamma_j-1}p_j^{k_j}(1-p_j)^{n-k_j}$$
+$$\propto p_j^{\alpha_j-1+k_j}(1-p_j)^{\gamma_j-1+n-k_j}$$
+
+where we have $k_j$ successes in $n$ trials. This is another Beta distribution (as expected) with parameters $\alpha_j+k_j$ and $\gamma_j+n-k_j$. Hence, we have $p_j|z_j\sim$ Beta$(\alpha_j+k_j,\gamma_j+n-k_j)=$. Now that we have a distribution for the posterior, we can simulate random variables to take as our $p_j$'s in $logit(p_j)=\beta X$.
+
+```{r}
+n <- nrow(data)
+k0 <- nrow(data[which(data$popular == 0),])
+k1 <- nrow(data[which(data$popular == 1),])
+p0 <- rbeta(k0,alpha0+k0,gamma0+n-k0)
+p1 <- rbeta(k1,alpha1+k1,gamma1+n-k1)
+p0[0:10]
+p1[0:10]
+```
+
+These seem reasonable, so we will stick with this strategy. Now we want to transform the response column. Those observations corresponding to zero will be populated by the set of $p_0$ random variables, and those corresponding to one will be populated by the set of $p_1$ random variables.
+
+```{r}
+transformed <- new.data
+for (i in 1:length(new.data$popular)) {
+  if (transformed$popular[i] == 0) {
+    transformed$popular[i] <- logit(p0[1])
+    p0 <- p0[-1]
+  }else {
+    transformed$popular[i] <- logit(p1[1])
+    p1 <- p1[-1]
+  }
+}
+```
+
+Now we can fit a linear model to this to get estimates for the $\beta$ coefficients. As we did in part (a), we can use the lasso to simplify the model and try to get a better fit.
+
+```{r, tidy=TRUE}
+# set-up
+x.trans <- model.matrix(popular ~., data = transformed)[, -1]
+y.trans <- transformed$popular
+train.trans <- sample(1:nrow(x.trans), nrow(x.trans) / 2)
+test.trans <- (-train.trans)
+y.train.trans <- y[train.trans]
+y.test.trans  <- y[test.trans]
+# all predictors included
+lm.all.model.train <- lm(popular ~., data = transformed, subset = train.trans)
+lm.all.probs.train <- inv.logit(predict(lm.all.model.train, newx = x.trans[test.trans, ]))
+lm.all.pred.test <- rep(0, d)
+lm.all.pred.test[lm.all.probs.train < 0.5] <- 1
+lm.mspe.all <- mean((lm.all.pred.test - y.test.trans)^2)
+lm.all.final.model <- lm(popular ~., data = transformed)
+# lasso
+lm.lasso.model <- glmnet(x.trans, y.trans,  family = "gaussian", alpha = 1, lambda = grid.lambda)
+plot(lm.lasso.model)
+lm.lasso.model.train <- glmnet(x.trans[train.trans, ], y.train.trans, family = "gaussian", alpha = 1, lambda = grid.lambda)
+lm.lasso.cv.out <- cv.glmnet(x.trans[train.trans, ], y.train.trans, family = "gaussian", alpha = 1)
+lm.lasso.best.lambda <- lm.lasso.cv.out$lambda.min
+lm.lasso.best.lambda <- lm.lasso.cv.out$lambda.min
+plot(lm.lasso.cv.out)
+abline(v = log(lm.lasso.best.lambda), col = "blue", lwd = 2)
+lm.lasso.probs.train <- inv.logit(predict(lm.lasso.model.train, s = lm.lasso.best.lambda, newx = x.trans[test.trans,]))
+lm.lasso.pred.test <- rep(0, d)
+lm.lasso.pred.test[lm.lasso.probs.train < 0.5] <- 1
+lm.mspe.lasso <- mean((lm.lasso.pred.test - y.test.trans)^2)
+lm.lasso.final.model <- glmnet(x.trans, y.trans, family = "gaussian", alpha = 1, lambda = lm.lasso.best.lambda)
+lm.coef.lasso <- coef(lm.lasso.final.model)
+exclude <- sum(lm.coef.lasso == 0)
+exclude
+# comparison
+MSPE <- data.frame(All = lm.mspe.all, Lasso = lm.mspe.lasso)
+MSPE
+```
+
+This time, we don't see much difference in MSPE, so both models are on par with guessing randomly. While this is unfortunate, it is important to remember that this model was only trained on part of the balanced data -- we will see how the final model (trained on all of the balanced data) does on the actual test set. The lasso model gives the following coefficients:
+
+```{r}
+coef(lm.lasso.final.model)
+```
+
+## 2.
+
+```{r, tidy=TRUE}
+# set-up
+test.data <- read.csv('~/Documents/MSAN 628/HW 4/OnlineNewsPopularityTest.csv', header = T)
+test.data$shares <- NULL
+test.data$url <- NULL
+test.data$timedelta <- NULL
+x.test.data <- model.matrix(popular ~., data = test.data)[, -1]
+y.test.data <- test.data$popular
+# standard logistic regression
+lasso.probs <- predict(lasso.final.model, type = "response", s = lasso.best.lambda, newx = x.test.data)
+d2 <- length(y.test.data)
+lasso.pred <- rep(0, d2)
+lasso.pred[lasso.probs > 0.5] <- 1
+mspe.lasso.test <- mean((lasso.pred - y.test.data)^2)
+sens.lasso.test <- sensitivity(factor(lasso.pred), factor(y.test.data))
+spec.lasso.test <- specificity(factor(lasso.pred), factor(y.test.data))
+# bayesian logistic regression
+lm.lasso.probs <- inv.logit(predict(lm.lasso.final.model, s = lm.lasso.best.lambda, newx = x.test.data))
+lm.lasso.pred <- rep(0, d2)
+lm.lasso.pred[lm.lasso.probs < 0.5] <- 1
+lm.mspe.lasso.test <- mean((lm.lasso.pred - y.test.data)^2)
+lm.sens.lasso.test <- sensitivity(factor(lm.lasso.pred), factor(y.test.data))
+lm.spec.lasso.test <- specificity(factor(lm.lasso.pred), factor(y.test.data))
+# comparison
+MSPE <- data.frame(Standard = mspe.lasso.test, Bayesian = lm.mspe.lasso.test)
+Sensitivity <- data.frame(Standard = sens.lasso.test, Bayesian = lm.sens.lasso.test)
+Specificity <- data.frame(Standard = spec.lasso.test, Bayesian = lm.spec.lasso.test)
+MSPE
+Sensitivity
+Specificity
+```
+
+We see that the final Bayesian model is actually very close to the standard model as both of these models have similar MSPEs, sensitivities, and specificities. As compared to models trained on the full, unbalanced dataset, we have larger MSPEs (less accurate), but also larger specificities (better at picking up the popular articles). We chose to train our final models on a balanced dataset at the cost of these larger MPSEs in order to get models that actually predict both classes. Given this set-up, our final models attain about ~66% accuracy, which is signficantly better than randomly guessing.
+
+Given that standard logistic regression and Bayesian logistic regression end up performing so similarly, I don't have much of a preference between the two methods. If I had to choose, I would use standard logistic regression since it is more familiar to me (and requires less work!). Although, this might change as I get more comfortable with Bayesian statistics -- ultimately, you have more flexibility and control over what you end up implementing.
+
